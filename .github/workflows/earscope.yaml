@@ -1,0 +1,85 @@
+name: Pipeline Earscope Model Build and Push Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*" # Trigger pipeline jika ada tag dengan awalan 'v'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Langkah 1: Checkout Repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Langkah 2: Login ke Docker Hub
+      - name: Login to Dockerhub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # Langkah 3: Ekstraksi Tag tau Commit
+      - name: Extract Version from Git Tag or Commit Hash
+        id: extract_version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="latest-$(date +%s)"
+          fi
+          echo "Extracted version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_ENV
+
+      # Langkah 4: Build Docker Image
+      - name: Build Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/earscope-model:${{ env.version }} .
+
+      # Langkah 5: Push Docker Image
+      - name: Push Docker Image
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/earscope-model:${{ env.version }}
+
+      # Langkah 6: Force Update Deployment YAML in GitHub Repo
+      - name: Force Update Deployment YAML in GitHub Repo
+        run: |
+          git config --global user.email "bot@example.com"
+          git config --global user.name "GitHub Actions Bot"
+
+          # Clone repo pakai token agar bisa push perubahan
+          git clone https://${{ secrets.GH_PA }}@github.com/adrfstwn/argocd-k8s-repo.git repo
+          cd repo
+
+          # Update file deployment.yaml untuk memicu ArgoCD sync
+          sed -i "s|image: adrfstwn/earscope-model:.*|image: adrfstwn/earscope-model:${{ env.version }} # $(date +%s)|" earscope-model/overlays/development/development.yaml
+
+          # Commit & push perubahan
+          git add earscope-model/overlays/development/development.yaml
+          git commit -m "Trigger ArgoCD sync with new image tag: ${{ env.version }}"
+          git push
+
+      # Langkah 7: Opsional rm old docker img
+      - name: Cleanup Old Docker Images
+        run: |
+          TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
+            -d '{"username": "${{ secrets.DOCKERHUB_USERNAME }}", "password": "${{ secrets.DOCKERHUB_TOKEN }}"}' \
+            https://hub.docker.com/v2/users/login/ | jq -r .token)
+      
+          IMAGES=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "https://hub.docker.com/v2/repositories/${{ secrets.DOCKERHUB_USERNAME }}/earscope-model/tags?page_size=100" | jq -r '.results[].name')
+      
+          for TAG in $IMAGES; do
+            if [[ $TAG == latest-* ]]; then
+              TIMESTAMP=$(echo $TAG | cut -d'-' -f2)
+              AGE=$(( $(date +%s) - TIMESTAMP ))
+              if [[ $AGE -gt 604800 ]]; then  # 7 hari = 604800 detik
+                curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+                  "https://hub.docker.com/v2/repositories/${{ secrets.DOCKERHUB_USERNAME }}/earscope-model/tags/$TAG/"
+                echo "Deleted old image tag: $TAG"
+              fi
+            fi
+          done

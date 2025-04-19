@@ -1,0 +1,19 @@
+labels:
+  0: acute_otitis_media
+  1: chronic_otitis_media
+  2: earwax_plug
+  3: myringosclerosis
+  4: normal
+  5: otitis_externa
+  6: pseduomembran
+  7: tympanosclerosis
+
+colors:
+  0: [255, 0, 0]
+  1: [0, 255, 0]
+  2: [0, 0, 255]
+  3: [255, 255, 0]
+  4: [0, 255, 255]
+  5: [255, 0, 255]
+  6: [128, 0, 128]
+  7: [0, 128, 128]

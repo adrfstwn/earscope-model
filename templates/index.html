@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Real-Time Kamera</title>
+
+    <!-- Font Awesome -->
+    <script src="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/js/all.min.js"></script>
+
+    <!-- Service Worker untuk PWA -->
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker
+          .register("/static/service-worker.js")
+          .then((reg) => console.log("Service Worker registered!", reg))
+          .catch((err) =>
+            console.log("Service Worker registration failed!", err)
+          );
+      }
+    </script>
+
+    <!-- Manifest dan CSS -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  </head>
+  <body>
+    <div class="camera-container" id="cameraFrame">
+      <!-- Logo Universitas -->
+      <div class="logo-container">
+        <img src="{{ url_for('static', filename='logo/d3ti.png') }}" alt="D3TI Logo" />
+        <img src="{{ url_for('static', filename='logo/uns.png') }}" alt="UNS Logo" />
+      </div>
+
+      <!-- Video stream -->
+      <img id="video" />
+
+      <!-- Kontrol Start dan Stop -->
+      <div class="controls">
+        <button class="open">
+          <i class="fas fa-video"></i> Start
+        </button>
+        <button class="close">
+          <i class="fas fa-stop"></i> Stop
+        </button>
+      </div>
+    </div>
+
+    <!-- Tombol reset -->
+    <div class="popup" id="popup">
+      <button onclick="resetPage()">
+        <i class="fas fa-sync-alt"></i>
+      </button>
+    </div>
+
+    <!-- Socket.IO (optional) -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+    <!-- Script utama -->
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+  </body>
+</html>
