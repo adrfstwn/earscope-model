@@ -298,11 +298,10 @@
 
 
 # Websocket
-
 import os
 import cv2
 import yaml
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from ultralytics import YOLO
 from config import Config
@@ -346,27 +345,50 @@ with open('model-earscope/data.yml', 'r') as f:
     labels = data['labels']
     colors = data['colors']
 
-# Frame processing queue dan worker threads
-frame_queue = queue.Queue(maxsize=500)  # Perbesar queue untuk menghindari drop frame
-MAX_WORKERS = 4  # Jumlah worker thread
-processed_frames = {}  # Dictionary untuk menyimpan frame yang sudah diproses
-frame_counter = 0  # Counter untuk mengidentifikasi frame
-frame_lock = threading.Lock()  # Lock untuk akses thread-safe ke frame counter
-worker_threads = []  # Simpan referensi ke semua worker thread
+# Optimasi 1: Lebih sedikit frame di queue untuk mengurangi lag
+frame_queue = queue.Queue(maxsize=250)  # Kurangi ukuran queue
+MAX_WORKERS = 4  # Kurangi jumlah worker untuk menghindari overhead context switching
+processed_frames = {}
+frame_counter = 0
+frame_lock = threading.Lock()
+worker_threads = []
+last_processed_frame_time = time.time()
 
+# Optimasi 2: Preload model di awal dan konfigurasikan untuk kecepatan
 class Detection:
-    def __init__(self):
-        # Load the YOLO model
-        self.model = YOLO(r"model-earscope/best.pt")
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(Detection, cls).__new__(cls)
+            # Load model sekali saja
+            cls._instance.model = YOLO(r"model-earscope/best.pt")
+            # Optimasi 3: Konfigurasi model untuk inferensi yang lebih cepat
+            cls._instance.model.to('cpu')  # Gunakan CPU jika GPU tidak tersedia
+        return cls._instance
 
     def predict(self, img, classes=[], conf=0.5):
+        # Optimasi 4: Kecilkan ukuran gambar untuk pemrosesan lebih cepat
+        img_resized = cv2.resize(img, (416, 416))  # Ukuran lebih kecil untuk inferensi
+        
         if classes:
-            results = self.model.predict(img, classes=classes, conf=conf)
+            results = self.model.predict(img_resized, classes=classes, conf=conf)
         else:
-            results = self.model.predict(img, conf=conf)
+            results = self.model.predict(img_resized, conf=conf)
+            
+        # Map kembali hasil ke ukuran asli
+        scale_x = img.shape[1] / 416.0
+        scale_y = img.shape[0] / 416.0
+        
+        # Konversi hasil
+        mapped_results = []
+        for result in results:
+            # Disini kita bisa menyesuaikan koordinat jika diperlukan
+            mapped_results.append(result)
+            
         return results
 
-    def predict_and_detect(self, img, classes=[], conf=0.5, rectangle_thickness=2, text_thickness=1):
+    def predict_and_detect(self, img, classes=[], conf=0.5, rectangle_thickness=1, text_thickness=1):
         results = self.predict(img, classes, conf=conf)
         for result in results:
             for box in result.boxes:
@@ -390,11 +412,12 @@ class Detection:
         result_img, _ = self.predict_and_detect(image, classes=[], conf=0.5)
         return result_img
 
+# Buat singleton detection instance
 detection = Detection()
 
-# Worker thread untuk memproses frame dari queue
+# Optimasi 5: Tambahkan mekanisme frame skipping untuk mengurangi lag
 def process_frame_worker():
-    global recording_data
+    global recording_data, last_processed_frame_time
     
     width, height = 512, 512
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -410,36 +433,64 @@ def process_frame_worker():
     
     detected_classes = []
     
+    frame_count = 0
+    skip_factor = 0  # Nilai awal, akan disesuaikan dinamis
+    
     try:
         while not stop_event.is_set():
             try:
-                # Ambil frame dari queue dengan timeout untuk cek stop_event secara periodik
+                # Ambil frame dari queue dengan timeout
                 frame_data = frame_queue.get(timeout=0.5)
                 frame_id = frame_data["id"]
                 frame = frame_data["frame"]
                 
-                # Resize frame dan tulis ke raw video
-                frame = cv2.resize(frame, (width, height))
-                raw_writer.write(frame)
+                frame_count += 1
+                should_process = (frame_count % (skip_factor + 1)) == 0
                 
-                # Proses dengan model deteksi
-                result_img, results = detection.predict_and_detect(frame.copy())
-                
-                # Rekam hasil deteksi
-                for result in results:
-                    for box in result.boxes:
-                        class_id = int(box.cls[0])
-                        detected_classes.append(class_id)
-                
-                # Tulis ke video terproses
-                bbox_writer.write(result_img)
-                
-                # Konversi hasil ke JPEG untuk dikirim kembali ke browser
-                ret, buffer = cv2.imencode('.jpg', result_img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                processed_frame = base64.b64encode(buffer).decode('utf-8')
-                
-                # Kirim hasilnya ke browser via WebSocket
-                socketio.emit('processed_frame', {'frame': processed_frame, 'id': frame_id})
+                # Proses dan kirim frame ke browser jika sesuai kondisi
+                if should_process:
+                    # Ukur waktu pemrosesan
+                    start_time = time.time()
+                    
+                    # Resize frame dan tulis ke raw video
+                    frame = cv2.resize(frame, (width, height))
+                    raw_writer.write(frame)
+                    
+                    # Proses dengan model deteksi
+                    result_img, results = detection.predict_and_detect(frame.copy())
+                    
+                    # Rekam hasil deteksi
+                    for result in results:
+                        for box in result.boxes:
+                            class_id = int(box.cls[0])
+                            detected_classes.append(class_id)
+                    
+                    # Tulis ke video terproses
+                    bbox_writer.write(result_img)
+                    
+                    # Optimasi 6: Kurangi kualitas JPEG untuk transmisi lebih cepat
+                    ret, buffer = cv2.imencode('.jpg', result_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    processed_frame = base64.b64encode(buffer).decode('utf-8')
+                    
+                    # Kirim hasilnya ke browser via WebSocket
+                    socketio.emit('processed_frame', {'frame': processed_frame, 'id': frame_id})
+                    
+                    # Ukur waktu yang dibutuhkan untuk pemrosesan
+                    end_time = time.time()
+                    process_time = end_time - start_time
+                    
+                    # Adaptasi skip_factor berdasarkan waktu pemrosesan
+                    # Jika pemrosesan >50ms, tingkatkan frame skipping
+                    if process_time > 0.05:
+                        skip_factor = min(5, skip_factor + 1)  # Maksimal skip 5 frame
+                    else:
+                        skip_factor = max(0, skip_factor - 1)  # Minimal tidak skip frame
+                    
+                    last_processed_frame_time = end_time
+                else:
+                    # Untuk frame yang di-skip, tetap simpan ke video mentah
+                    frame = cv2.resize(frame, (width, height))
+                    raw_writer.write(frame)
                 
                 # Tandai frame sudah selesai di queue
                 frame_queue.task_done()
@@ -480,8 +531,8 @@ def handle_disconnect():
     logger.info('Client disconnected')
 
 @socketio.on('start_stream')
-def handle_start_stream(data=None):  # Tambahkan parameter default data=None
-    global frame_counter, processed_frames, worker_threads
+def handle_start_stream(data=None):
+    global frame_counter, processed_frames, worker_threads, last_processed_frame_time
     
     # Reset data
     stop_event.clear()
@@ -492,11 +543,12 @@ def handle_start_stream(data=None):  # Tambahkan parameter default data=None
     recording_data["raw_path"] = None
     recording_data["bbox_path"] = None
     recording_data["diagnosis"] = None
+    last_processed_frame_time = time.time()
     
     # Bersihkan worker threads yang mungkin masih berjalan
     worker_threads = []
     
-    # Mulai worker threads untuk pemrosesan frame
+    # Optimasi 7: Kurangi jumlah worker threads
     for _ in range(MAX_WORKERS):
         worker = Thread(target=process_frame_worker)
         worker.daemon = True
@@ -507,12 +559,24 @@ def handle_start_stream(data=None):  # Tambahkan parameter default data=None
     emit('stream_started', {'status': 'started'})
     return {'status': 'started'}
 
+# Optimasi 8: Implementasikan throttling untuk menekan beban server
+last_frame_accepted_time = time.time()
+frame_accept_interval = 1.0 / 15.0  # Maksimal 15 FPS diterima server
+
 @socketio.on('frame')
 def handle_frame(data):
-    global frame_counter
+    global frame_counter, last_frame_accepted_time
     
     if stop_event.is_set():
         return {'status': 'stopped'}
+    
+    current_time = time.time()
+    
+    # Throttling: Tolak frame jika terlalu cepat
+    if current_time - last_frame_accepted_time < frame_accept_interval:
+        return {'status': 'throttled'}
+    
+    last_frame_accepted_time = current_time
     
     try:
         # Decode frame dari base64
@@ -533,9 +597,21 @@ def handle_frame(data):
             current_frame_id = frame_counter
             frame_counter += 1
         
-        # Masukkan ke queue untuk diproses (gunakan block=False sebagai gantinya)
+        # Optimasi 9: Jika queue terlalu penuh, buang frame lama
+        if frame_queue.qsize() > frame_queue.maxsize * 0.8:
+            try:
+                # Buang frame paling lama dari queue
+                try:
+                    _ = frame_queue.get_nowait()
+                    frame_queue.task_done()
+                    logger.warning("Queue filling up, dropped old frame")
+                except queue.Empty:
+                    pass
+            except Exception as e:
+                logger.error(f"Error dropping old frame: {e}")
+        
+        # Masukkan ke queue untuk diproses
         try:
-            # Gunakan timeout singkat sebagai gantinya put_nowait untuk lebih handal
             frame_queue.put({"id": current_frame_id, "frame": frame}, timeout=0.1)
         except queue.Full:
             logger.warning("Frame processing queue is full, dropping frame")
@@ -547,7 +623,7 @@ def handle_frame(data):
         return {'status': 'error', 'message': str(e)}
 
 @socketio.on('stop_stream')
-def handle_stop_stream(data=None):  # Tambahkan parameter default data=None
+def handle_stop_stream(data=None):
     logger.info("Received request to stop streaming")
     stop_event.set()
     

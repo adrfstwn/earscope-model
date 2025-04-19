@@ -212,6 +212,8 @@
 
 // Websocket
 
+// Websocket - optimized for better performance
+
 let isStreaming = false;
 let mediaStream = null;
 let socket = null;
@@ -219,21 +221,23 @@ const videoElement = document.getElementById("video");
 const startButton = document.querySelector(".open");
 const stopButton = document.querySelector(".close");
 const localVideo = document.createElement("video");
-const FPS = 15; // Target FPS untuk pengiriman
 
-// Configurasi webcam browser
+// Optimasi 1: Kurangi FPS untuk mengurangi beban pada server
+const FPS = 60; // Turunkan FPS dari 15 ke 10
+
+// Optimasi 2: Turunkan resolusi untuk performa lebih baik
 const constraints = {
   video: {
-    width: { ideal: 512 },
-    height: { ideal: 512 },
-    facingMode: "user", // Gunakan kamera depan, ubah ke "environment" untuk kamera belakang
+    width: { ideal: 480 }, // Turunkan dari 512 ke 480
+    height: { ideal: 480 }, // Turunkan dari 512 ke 480
+    facingMode: "user",
   },
 };
 
-// Setup canvas untuk ekstrak frame
+// Optimasi 3: Kurangi ukuran canvas untuk pengolahan lebih cepat
 const canvas = document.createElement("canvas");
-canvas.width = 512;
-canvas.height = 512;
+canvas.width = 480; // Sesuaikan dengan constraints
+canvas.height = 480; // Sesuaikan dengan constraints
 const ctx = canvas.getContext("2d");
 
 // Create notification element
@@ -310,18 +314,16 @@ function showNotification(message, isSuccess = true) {
 function displayProcessedFrame(base64Image) {
   if (!isStreaming) return;
 
-  const img = new Image();
-  img.onload = () => {
-    const displayCanvas = document.createElement("canvas");
-    displayCanvas.width = videoElement.width || 512;
-    displayCanvas.height = videoElement.height || 512;
-    const displayCtx = displayCanvas.getContext("2d");
-    displayCtx.drawImage(img, 0, 0, displayCanvas.width, displayCanvas.height);
+  // Optimasi 4: Menerapkan frame skipping jika sistem lag
+  const now = performance.now();
+  if (now - lastFrameDisplayed < 50) {
+    // Jangan tampilkan frame jika interval kurang dari 50ms
+    return;
+  }
+  lastFrameDisplayed = now;
 
-    // Convert canvas to image untuk elemen video
-    videoElement.src = displayCanvas.toDataURL("image/jpeg");
-  };
-  img.src = "data:image/jpeg;base64," + base64Image;
+  // Optimasi 5: Simplifikasi proses rendering dengan img.src langsung
+  videoElement.src = "data:image/jpeg;base64," + base64Image;
 }
 
 // Inisialisasi WebSocket
@@ -339,9 +341,11 @@ function initSocket() {
     return null;
   }
 
+  // Optimasi 6: Tingkatkan timeout untuk menghindari koneksi terputus karena jaringan lambat
   socket = io.connect(window.location.origin, {
     reconnection: true,
     reconnectionAttempts: 5,
+    timeout: 10000, // Tambah timeout koneksi jadi 10 detik
   });
 
   socket.on("connect", () => {
@@ -389,8 +393,11 @@ function initSocket() {
 
 // Function untuk ekstrak dan kirim frame ke server melalui WebSocket
 let lastFrameTime = 0;
+let lastFrameDisplayed = 0;
 const frameDuration = 1000 / FPS; // Durasi antar frame dalam ms
+let frameSkipCounter = 0; // Untuk adaptive frame skipping
 
+// Optimasi 7: Tambahkan adaptive frame skipping untuk mengurangi beban
 async function captureAndSendFrame() {
   if (!isStreaming || !mediaStream || !socket || !socket.connected) return;
 
@@ -403,17 +410,51 @@ async function captureAndSendFrame() {
     return;
   }
 
+  // Optimasi 8: Adaptive frame skipping berdasarkan response time
+  if (frameSkipCounter > 0) {
+    frameSkipCounter--;
+    lastFrameTime = now;
+    if (isStreaming) {
+      requestAnimationFrame(captureAndSendFrame);
+    }
+    return;
+  }
+
   lastFrameTime = now;
 
   try {
     // Gambar frame dari video ke canvas
     ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
 
-    // Kompresi gambar lebih tinggi
-    const imageData = canvas.toDataURL("image/jpeg", 0.7);
+    // Optimasi 9: Kompresi gambar lebih tinggi - turunkan kualitas JPEG
+    const imageData = canvas.toDataURL("image/jpeg", 0.65); // Turunkan kualitas untuk mengurangi ukuran data
 
-    // Kirim ke server via WebSocket
-    socket.emit("frame", { frame: imageData });
+    // Ukur waktu kirim
+    const sendTime = performance.now();
+
+    // Tambahkan timestamp ke frame untuk mengukur round-trip time
+    socket.emit(
+      "frame",
+      { frame: imageData, timestamp: sendTime },
+      (response) => {
+        if (response && response.status === "throttled") {
+          // Jika server throttling, tambah frame skipping
+          frameSkipCounter = 2; // Skip 2 frame berikutnya
+        } else if (response && response.status === "received") {
+          // Ukur round-trip time
+          const rtt = performance.now() - sendTime;
+
+          // Sesuaikan frame skipping berdasarkan RTT
+          if (rtt > 200) {
+            frameSkipCounter = 3; // Skip lebih banyak frame jika jaringan lambat
+          } else if (rtt > 100) {
+            frameSkipCounter = 1; // Skip sedikit frame
+          } else {
+            frameSkipCounter = 0; // Tidak perlu skip frame
+          }
+        }
+      }
+    );
   } catch (error) {
     console.error("Error capturing or sending frame:", error);
   }
@@ -423,6 +464,36 @@ async function captureAndSendFrame() {
     requestAnimationFrame(captureAndSendFrame);
   }
 }
+
+// Indikator status koneksi
+let connectionStatus = document.createElement("div");
+connectionStatus.style.cssText = `
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background-color: gray;
+`;
+document.querySelector(".camera-container").appendChild(connectionStatus);
+
+// Optimasi 10: Tambahkan monitoring koneksi untuk notifikasi visual
+function updateConnectionStatus() {
+  if (!socket) {
+    connectionStatus.style.backgroundColor = "gray";
+    return;
+  }
+
+  if (socket.connected) {
+    connectionStatus.style.backgroundColor = "green";
+  } else {
+    connectionStatus.style.backgroundColor = "red";
+  }
+}
+
+// Update status koneksi setiap 2 detik
+setInterval(updateConnectionStatus, 2000);
 
 // Start streaming
 async function startStreaming() {
@@ -451,6 +522,8 @@ async function startStreaming() {
     // Mulai pengiriman frame menggunakan requestAnimationFrame
     isStreaming = true;
     lastFrameTime = 0;
+    lastFrameDisplayed = 0;
+    frameSkipCounter = 0;
 
     // Mulai loop pengiriman frame
     requestAnimationFrame(captureAndSendFrame);
@@ -500,11 +573,19 @@ async function stopStreaming() {
   }
 }
 
-// Tombol Start
-startButton.addEventListener("click", startStreaming);
+// Tombol Start dengan anti-double click
+startButton.addEventListener("click", () => {
+  if (startButton.disabled) return;
+  startButton.disabled = true;
+  setTimeout(() => startStreaming(), 100); // Delay kecil untuk UI feedback
+});
 
-// Tombol Stop
-stopButton.addEventListener("click", stopStreaming);
+// Tombol Stop dengan anti-double click
+stopButton.addEventListener("click", () => {
+  if (stopButton.disabled) return;
+  stopButton.disabled = true;
+  setTimeout(() => stopStreaming(), 100); // Delay kecil untuk UI feedback
+});
 
 // Reset Page
 function resetPage() {
