@@ -7,7 +7,6 @@
 
     <!-- Font Awesome -->
     <script src="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/js/all.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
 
     <!-- Service Worker untuk PWA -->
     <script>
@@ -15,9 +14,7 @@
         navigator.serviceWorker
           .register("/static/service-worker.js")
           .then((reg) => console.log("Service Worker registered!", reg))
-          .catch((err) =>
-            console.log("Service Worker registration failed!", err)
-          );
+          .catch((err) => console.log("Service Worker registration failed!", err));
       }
     </script>
 
@@ -47,17 +44,54 @@
       </div>
     </div>
 
-    <!-- Tombol reset -->
-    <div class="popup" id="popup">
-      <button onclick="resetPage()">
-        <i class="fas fa-sync-alt"></i>
-      </button>
+    <!-- Pesan No Internet -->
+    <div id="noInternet" style="
+      display: none;
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: red;
+      color: white;
+      padding: 30px 60px;
+      border-radius: 8px;
+      z-index: 99;
+    ">
+      Tidak ada koneksi internet. Periksa WiFi Anda!
     </div>
 
     <!-- Socket.IO (optional) -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 
     <!-- Script utama -->
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script>
+      const video = document.getElementById("video");
+      const startBtn = document.querySelector(".open");
+      const stopBtn = document.querySelector(".close");
+      const noInternet = document.getElementById("noInternet");
+      let streamStarted = false;
+
+      async function checkInternet() {
+        try {
+          const response = await fetch("/process_video", { method: "HEAD" });
+          noInternet.style.display = response.ok ? "none" : "block";
+        } catch (e) {
+          noInternet.style.display = "block";
+        }
+      }
+
+      setInterval(checkInternet, 1000); // Cek koneksi tiap 5 detik
+
+      startBtn.addEventListener("click", () => {
+        if (!streamStarted) {
+          video.src = "/process_video";
+          streamStarted = true;
+        }
+      });
+
+      stopBtn.addEventListener("click", async () => {
+        await fetch("/stop_recording", { method: "POST" });
+        setTimeout(() => location.reload(), 3000); // Refresh otomatis 3 detik setelah stop
+      });
+    </script>
   </body>
 </html>
