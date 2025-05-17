@@ -1,7 +1,7 @@
 import os
 import cv2
 import yaml
-from flask import Flask, render_template, Response, jsonify, abort
+from flask import Flask, request, render_template, Response, jsonify, abort
 from ultralytics import YOLO
 from config import Config
 import requests
@@ -115,11 +115,13 @@ def index():
 
 @app.route('/process_video')
 def process_video():
+    if request.method == 'HEAD':
+        # Hanya balas dengan status 200 OK untuk cek koneksi
+        return '', 200
 
     if not network_available:
         logger.warning("Tidak bisa mulai recording: jaringan tidak tersedia")
         return jsonify({'status': 'error', 'message': 'Tidak ada koneksi internet. Coba lagi nanti.'}), 503
-    
     global recording_data
     # Reset recording data
     recording_data = {
