@@ -47,6 +47,31 @@
       <!-- Video stream -->
       <img id="video" />
 
+      <!-- Loading -->
+      <div
+        id="loadingOverlay"
+        style="
+          display: none;
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.7);
+          color: white;
+          font-size: 24px;
+          font-weight: bold;
+          justify-content: center;
+          align-items: center;
+          z-index: 999;
+        "
+      >
+        <div style="display: flex; flex-direction: column; align-items: center">
+          <i class="fas fa-spinner fa-spin" style="font-size: 40px"></i>
+          <p style="margin-top: 10px">Membuka kamera...</p>
+        </div>
+      </div>
+
       <!-- Kontrol Start dan Stop -->
       <div class="controls">
         <button class="open" id="startBtn">
@@ -110,6 +135,7 @@
       const stopBtn = document.getElementById("stopBtn");
       const noInternet = document.getElementById("noInternet");
       const timer = document.getElementById("timer");
+      const loadingOverlay = document.getElementById("loadingOverlay");
 
       let streamStarted = false;
       let timerInterval;
@@ -146,9 +172,8 @@
 
       // stop otomatis jika lebih dari 30 detik
       async function autoStop() {
-        clearInterval(timerInterval);
-        await fetch("/stop_recording", { method: "POST" });
         stopTimer();
+        await fetch("/stop_recording", { method: "POST" });
 
         stopBtn.disabled = true;
         startBtn.disabled = false;
@@ -177,11 +202,17 @@
 
       startBtn.addEventListener("click", () => {
         if (!streamStarted) {
+          loadingOverlay.style.display = "flex";
+
           video.src = "/process_video";
           streamStarted = true;
 
           startBtn.disabled = true;
           stopBtn.disabled = false;
+
+          video.onload = () => {
+            loadingOverlay.style.display = "none";
+          };
         }
       });
 
