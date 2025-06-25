@@ -59,6 +59,31 @@ body {
   z-index: 0; /* Video is placed behind everything */
 }
 
+#timer {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 128, 0, 0.8);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 18px;
+  display: none;
+  z-index: 99;
+}
+
+#noInternet {
+  display: none;
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: red;
+  color: white;
+  padding: 30px 60px;
+  border-radius: 8px;
+  z-index: 99;
+}
+
 .controls {
   position: absolute;
   bottom: 20px;
@@ -77,6 +102,10 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .open {
