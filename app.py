@@ -208,7 +208,12 @@ def record_and_stream():
         detected_classes = []
 
         for frame in frames:
-            result_img, results = detection.predict_and_detect(frame.copy())
+            # result_img, results = detection.predict_and_detect(frame.copy())
+            resized_frame = cv2.resize(frame.copy(), (640, 640))  # untuk input ke model
+            result_img, results = detection.predict_and_detect(resized_frame)
+
+            result_img = cv2.resize(result_img, (1280, 720))
+
             for result in results:
                 for box in result.boxes:
                     class_id = int(box.cls[0])
