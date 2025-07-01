@@ -1,0 +1,15 @@
+labels:
+  0: acute
+  1: chronic
+  2: earwaxplug
+  3: myringosclerosis
+  4: normal
+  5: undefined
+
+colors:
+  0: [255, 0, 0]
+  1: [0, 255, 0]
+  2: [0, 0, 255]
+  3: [255, 255, 0]
+  4: [0, 255, 255]
+  5: [255, 0, 255]

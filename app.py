@@ -45,7 +45,7 @@ if not app.secret_key:
 #     data = yaml.safe_load(f)
 #     labels = data['labels']
 #     colors = data['colors']
-with open('model-earscope/data2.yml', 'r') as f:
+with open('model-earscope/data3.yml', 'r') as f:
     data = yaml.safe_load(f)
     labels = data['labels']
     colors = data['colors']
@@ -78,7 +78,7 @@ class Detection:
     def __init__(self):
         # Load the YOLO model
         # self.model = YOLO(r"model-earscope/best.pt")
-        self.model = YOLO(r"model-earscope/best2.pt")
+        self.model = YOLO(r"model-earscope/best3.pt")
 
     def predict(self, img, classes=[], conf=0.5):
         if classes:
